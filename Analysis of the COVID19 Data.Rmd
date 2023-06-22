@@ -3,7 +3,6 @@ title: "Import, Tidy and Analysis of the COVID-19 Dataset"
 author: "Yalaz Baysan"
 date: "2023-06-21"
 output:
-  pdf_document: default
   html_document: default
 ---
 
