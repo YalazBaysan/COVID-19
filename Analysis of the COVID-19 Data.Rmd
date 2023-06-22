@@ -1,0 +1,376 @@
+---
+title: "Import, Tidy and Analysis of the COVID-19 Dataset"
+author: "Yalaz Baysan"
+date: "2023-06-21"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+-   Title: COVID-19 Data Repository by the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University
+-   Links of the datasets:
+    -   [Global Cases](https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv)
+    -   [Global deaths](https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv)
+    -   [US Cases](https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv)
+    -   [US Cases](https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv)
+-   Dataset description: On March 10, 2023, the Johns Hopkins Coronavirus Resource Center ceased its collecting and reporting of global COVID-19 data.
+
+The Johns Hopkins Coronavirus Resource Center established a new standard for infectious disease tracking by publicly providing pandemic data in near real time. It began Jan. 22, 2020 as the COVID-19 Dashboard, operated by the Center for Systems Science and Engineering and the Applied Physics Laboratory. But the map of red dots quickly evolved into the global go-to hub for monitoring a public health catastrophe. By March 3, 2020, Johns Hopkins expanded the site into a comprehensive collection of raw data and independent expert analysis known as the Coronavirus Resource Center (CRC) -- an enterprise that harnessed the world-renowned expertise from across Johns Hopkins University & Medicine.
+
+**Note:** This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+## Import libraries
+
+To access the datasets and functions that we will use in this project, load the libraries `tidyverse` and `lubridate` by running the following codes:
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+## Load the data
+
+We will load the data in R with the **readr** package, which is part of the core `tidyverse`.
+
+Most of **readr**'s functions are concerned with turning flat files into data frames:
+
+* `read_csv()` reads comma-delimited files.
+* `read_csv2()` reads semicolon-separated files.
+* `read_tsv()` reads tab-delimited files.
+* `read_delim()` reads in files with any delimiter.
+
+Here, we will use `read_csv()`.
+
+```{r import_data}
+# Get current Data in the four files.
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names <- c("time_series_covid19_confirmed_global.csv",
+                "time_series_covid19_deaths_global.csv", 
+                "time_series_covid19_confirmed_US.csv", 
+                "time_series_covid19_deaths_US.csv")
+urls <- str_c(url_in, file_names)
+```
+
+We now read in the data and see what we have.
+
+```{r}
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+US_cases <- read_csv(urls[3])
+US_deaths <- read_csv(urls[4])
+```
+
+## Check the data structure
+
+```{r check_stucture}
+head(global_cases)
+head(global_deaths)
+head(US_cases)
+head(US_deaths)
+```
+
+## Possible bias
+
+1. The United States probably is one of the top 5 countries with the most COVID-19 cases as of a year after the start of the pandemic.
+2. The United States is probably one of the top 10 countries with the highest mortality rates.
+
+## Analytics plan
+
+1.  We will determine the top 10 countries with the most cases to check the bias above.
+2.  We will also leverage modeling method to find the relation between number of deaths and cases.
+
+## Data transform
+
+We need to tidy the datasets and put each variable in its own column. Also, we don’t need "Lat" and "Long" for this analysis, so we will get rid of those and rename "Region" and "State" to be more R friendly.
+
+```{r}
+global_cases <- global_cases %>%
+  pivot_longer(cols = -c('Province/State',
+                         'Country/Region', Lat, Long),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(-c(Lat, Long))
+```
+
+```{r}
+global_deaths <- global_deaths %>%
+  pivot_longer(cols = -c('Province/State',
+                         'Country/Region', Lat, Long),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(-c(Lat, Long))
+```
+
+Let us combine "global_cases" and "global_deaths" together and check the data structure. We also need to list date under variable "date" and change it to date format using `mutate()`.
+
+
+```{r}
+global <- full_join(global_cases, global_deaths,
+                    by = c("Province/State", "Country/Region", "date")) %>%
+  rename(Province_State = "Province/State",
+         Country_Region = "Country/Region",
+         cases = cases.x,
+         deaths = cases.y) %>%
+  mutate(date = mdy(date))
+```
+
+```{r}
+head(global)
+```
+
+Now, we will filter the dataset and remove the rows with zero cases and take a look at the data summary.
+
+```{r}
+global <- global %>%
+  filter(cases > 0)
+```
+
+```{r}
+summary(global)
+```
+
+As we can see, the first case recorded on 01/22/2020.
+Now, let us add a column that have the total population of each country.
+
+```{r}
+uid_lookup_url <- "https://github.com/CSSEGISandData/COVID-19/blob/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv?raw=true"
+uid_lookup <- read_csv(uid_lookup_url)
+```
+
+
+```{r}
+# Join `uid_lookup` with `global` data frame to add `population` column.
+
+global <- global %>%
+  left_join(uid_lookup, by = c("Country_Region", "Province_State")) %>%
+  select(-c(`iso2`, `iso3`, `code3`, `FIPS`, `Admin2`, `Combined_Key`,`UID`, `Lat`, `Long_`))
+```
+
+```{r}
+head(global)
+```
+
+We will determine the top 5 countries with the most COVID-19 cases as of a year after the beginning of the pandemic.
+
+``` {r}
+# Filter the global data frame to include only data from January 22, 2021
+global_jan22 <- global %>% 
+  filter(date == as.Date("2021-01-22"))
+
+# Group the data by country and summarize the total number of cases
+jan22_summary <- global_jan22 %>% 
+  group_by(Country_Region) %>% 
+  summarize(total_cases = sum(cases)) %>% 
+  arrange(desc(total_cases))
+
+# Select only the top 5 countries with the most cases
+top5_jan22_summary <- jan22_summary %>% 
+  slice(1:5)
+
+# Print the resulting table
+top5_jan22_summary
+
+```
+
+## Visualize total cases of the top 5 countries from 01-22-2020 to 01-22-2021
+
+```{r}
+# Filter the global data frame to include data from January 22, 2020, to January 22, 2021
+global_filtered <- global %>% 
+  filter(date >= as.Date("2020-01-22") & date <= as.Date("2021-01-22"))
+
+# Group the data by country and summarize the total number of cases
+top5_summary <- global_filtered %>% 
+  group_by(Country_Region) %>% 
+  summarize(total_cases = sum(cases)) %>% 
+  arrange(desc(total_cases)) %>% 
+  slice(1:5)
+
+# Filter the global data frame to include only data for the top 5 countries by cases
+global_top5 <- global_filtered %>% 
+  filter(Country_Region %in% top5_summary$Country_Region)
+
+# Create a line chart of the total number of cases by date and country
+ggplot(global_top5, aes(x = date, y = cases, color = Country_Region)) +
+  geom_line(size = 1) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Total COVID-19 Cases by Top 5 Countries",
+       subtitle = "From January 22, 2020, to January 22, 2021",
+       x = "Date",
+       y = "Total Cases",
+       color = "Country") +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        plot.subtitle = element_text(size = 12),
+        axis.title = element_text(face = "bold", size = 12),
+        legend.title = element_text(face = "bold", size = 10),
+        legend.text = element_text(size = 8),
+        axis.text.x = element_text(angle = 90, vjust = 0.5))
+```
+
+## Visualize total cases of top 5 countries
+
+```{r}
+# Filter the global data frame to include data from January 22, 2020, to March 9, 2023
+global_filtered <- global %>% 
+  filter(date >= as.Date("2020-01-22") & date <= as.Date("2023-03-09"))
+
+# Group the data by country and summarize the total number of cases
+top5_summary <- global_filtered %>% 
+  group_by(Country_Region) %>% 
+  summarize(total_cases = sum(cases)) %>% 
+  arrange(desc(total_cases)) %>% 
+  slice(1:5)
+
+# Filter the global data frame to include only data for the top 5 countries by cases
+global_top5 <- global_filtered %>% 
+  filter(Country_Region %in% top5_summary$Country_Region)
+
+# Create a line chart of the total number of cases by date and country
+ggplot(global_top5, aes(x = date, y = cases, color = Country_Region)) +
+  geom_line(size = 1) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Total COVID-19 Cases by Top 5 Countries",
+       subtitle = "From the beginning to the last day recorded",
+       x = "Date",
+       y = "Total Cases",
+       color = "Country") +
+  scale_x_date(date_breaks = "6 months", date_labels = "%b %Y") +
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        plot.subtitle = element_text(size = 12),
+        axis.title = element_text(face = "bold", size = 12),
+        legend.title = element_text(face = "bold", size = 10),
+        legend.text = element_text(size = 8))
+```
+
+Let us now determine the mortality rates.
+
+``` {r}
+global <- global %>%
+  mutate(mortality_rate = deaths / cases)
+top_mortality <- global %>%
+  group_by(Country_Region) %>%
+  summarize(total_cases = sum(cases), 
+            total_deaths = sum(deaths),
+            mortality_rate = total_deaths / total_cases) %>%
+  arrange(desc(mortality_rate)) %>%
+  top_n(10)
+top_mortality
+```
+
+The table shows that the reported numbers for North Korea are not correct because the mortality rate cannot be greater than one. The table also includes the MS Zaandam, which was a cruise ship that had a COVID-19 outbreak on board, and its passengers and crew were stranded at sea for weeks before being allowed to disembark.
+
+## Visualize the top 10 countries with highest mortality rates
+
+
+```{r}
+# Filter the global data frame to remove "Korea, North" and "MS Zaandam"
+top_mortality <- global %>%
+  filter(Country_Region != "Korea, North" & Country_Region != "MS Zaandam") %>%
+  group_by(Country_Region) %>%
+  summarize(total_cases = sum(cases), 
+            total_deaths = sum(deaths),
+            mortality_rate = total_deaths / total_cases) %>%
+  arrange(desc(mortality_rate)) %>%
+  top_n(10)
+## Selecting by mortality_rate
+ggplot(top_mortality, aes(x = reorder(Country_Region, -mortality_rate), y = mortality_rate)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Top 10 Countries with Highest Mortality Rates",
+       x = "Country",
+       y = "Mortality Rate") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+
+```
+
+Now, let us see which country handled the pandemic better. Note that this analysis is subjective and may depend on various components. However, one way to compare countries is by visualizing the daily new cases and deaths over time, as follows:
+
+```{r}
+library(ggplot2)
+global %>%
+  filter(date >= "2020-01-22" & date <= "2023-03-09" & 
+           Country_Region != "Winter Olympics 2022") %>%
+  group_by(Country_Region) %>%
+  summarize(total_cases = sum(cases),
+            total_deaths = sum(deaths),
+            Population = max(Population)) %>%
+  ungroup() %>%
+  mutate(mortality_rate = total_deaths / total_cases,
+         cases_per_million = (total_cases / Population) * 1000000) %>%
+  filter(total_cases >= 1000000) %>%
+  top_n(10, cases_per_million) %>%
+  ggplot(aes(x = reorder(Country_Region, -mortality_rate), y = mortality_rate, fill = Country_Region)) +
+  geom_col() +
+  scale_fill_viridis_d() +
+  labs(title = "Top 10 Countries by Mortality Rate",
+       x = "Country",
+       y = "Mortality Rate") +
+  coord_flip() +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## Build a model
+
+We will build a model to see the relationship between number of deaths and number of cases.
+
+```{r}
+global_model <- global %>%
+  filter(date >= "2020-01-22" & date <= "2023-03-09" & 
+           Country_Region != "Winter Olympics 2022") %>%
+  group_by(Country_Region) %>%
+  summarize(total_cases = sum(cases),
+            total_deaths = sum(deaths),
+            Population = max(Population)) %>%
+  ungroup()
+
+```
+
+
+```{r model}
+mod <- lm(total_deaths  ~ total_cases, data = global_model)
+summary(mod)
+```
+
+## Predict number of deaths with the model
+
+```{r pred_death}
+pred <- tibble(pred = predict(mod))
+global_model_w_pred <- cbind(global_model, pred)
+```
+
+## Plot predicted deaths and actual deaths
+
+```{r plot_death}
+options(repr.plot.width=30, repr.plot.height=8)
+global_model_w_pred %>% ggplot() +
+   geom_point(aes(x=total_cases, y=total_deaths, size = 1.5), color = "red") +
+   geom_point(aes(x = total_cases, y = pred,size = 1.5), color = "blue") +
+   geom_line(aes(x = total_cases, y = pred ),linetype = "dashed", color = "blue") +
+   labs(title = "Model deaths with cases", y= NULL) +
+   theme(text=element_text(size=10)) #change font size of legend title
+```
+
+## Conclusion
+
+Based on our analysis of the COVID-19 dataset provided by Johns Hopkins University, we have the following:
+
+* The pandemic has had a significant impact on the world since its beginning on January 22, 2020.
+* The total number of cases and deaths has been increasing dramatically worldwide.
+* The United States has had the highest number of cases and deaths.
+* Yemen has had the highest mortality rate from COVID-19.
+* Australia has handled the pandemic better, controlling the spread of the virus and flattening the curve more effectively.
+* Based on our model, there is 1.34% possibility of dying in a case of COVID-19.
+
+## My session info
+
+```{r sessionInfo, echo=TRUE}
+sessionInfo()
+```
